@@ -2,11 +2,17 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from scenedetect import detect, ContentDetector, ThresholdDetector, AdaptiveDetector
 import tempfile
 import os
 
 app = FastAPI()
+
+# static mount so render can serve images
+os.makedirs("/tmp/frames", exist_ok=True)
+app.mount("/frames", StaticFiles(directory="/tmp/frames"), name="frames")
+
 
 class TransitionFrameViewer:
     def __init__(self, video_path: str):
@@ -52,16 +58,38 @@ class TransitionFrameViewer:
             if f-merged[-1] > merge_window: merged.append(f)
         return merged
 
+
 @app.post("/detect")
 async def detect_api(video: UploadFile = File(...)):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
         tmp.write(await video.read())
         tmp_path = tmp.name
 
+    transitions_output = []
+
     try:
         viewer = TransitionFrameViewer(tmp_path)
         frames = viewer.detect_transitions()
-        os.remove(tmp_path)
-        return JSONResponse({"transitions": frames})
+
+        cap = cv2.VideoCapture(tmp_path)
+        for f in frames:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+            ret, fr = cap.read()
+            if ret:
+                outpath = f"/tmp/frames/frame_{f}.png"
+                cv2.imwrite(outpath, fr)
+                transitions_output.append({
+                    "frame_no": f,
+                    "url": f"/frames/frame_{f}.png"
+                })
+        cap.release()
+
+        return JSONResponse({"transitions": transitions_output})
+
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
