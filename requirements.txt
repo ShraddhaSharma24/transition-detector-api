@@ -3,3 +3,5 @@ uvicorn
 opencv-python-headless
 scenedetect[opencv]
 numpy
+python-multipart
+
